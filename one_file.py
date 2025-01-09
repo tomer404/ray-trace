@@ -268,6 +268,7 @@ def light_intersect(light_ray, surfaces):
             return True
     return False
 
+
 def get_color(hit, ray, scene_settings, lights, surfaces, material_list):
     if(hit.obj==None):
         return scene_settings.background_color
@@ -300,6 +301,17 @@ def ray_trace(hit, ray, scene_settings, lights, surfaces, material_list, level):
     return np.clip(color, 0, 1)
 
 
+def light_intersect_shadow(ray_origins, ray_directions, surfaces, light_distances):
+    epsilon = 1e-3
+    intersections = np.full(ray_origins.shape[0], False)
+
+    for obj in surfaces:
+        obj_intersects = obj.batch_intersect(ray_origins, ray_directions, light_distances)
+        intersections = intersections | obj_intersects
+
+    return intersections
+
+
 def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
     root_number_shadow_rays = int(root_number_shadow_rays)
     num_shadow_rays = root_number_shadow_rays ** 2
@@ -316,13 +328,29 @@ def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
     rectangle_corner = light.position - (root_number_shadow_rays/2)*u - (root_number_shadow_rays/2)*v
     rng = np.random.default_rng()
     cnt_intersection = 0
+    sample_points = []
+    #x_vec = np.arange(0, root_number_shadow_rays)+rng.random()
+    #y_vec = np.arange(0, root_number_shadow_rays)+rng.random()
+    #sample_points[:, 0] = rectangle_corner[0] + u[0]*(np.arange(0, root_number_shadow_rays)+rng.random())+v[0]*(np.arange(0, root_number_shadow_rays)+rng.random())
     for x in range(root_number_shadow_rays):
         for y in range(root_number_shadow_rays):
             sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
-            light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
-            if(light_intersect(light_ray, surfaces)):
-                cnt_intersection += 1
-    return 1-cnt_intersection/num_shadow_rays
+            sample_points.append(sample_position)
+            #light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
+            #if(light_intersect(light_ray, surfaces)):
+            #    cnt_intersection += 1
+
+    sample_points=np.array(sample_points)
+    light_ray_dirs = sample_points - hit.hit_point
+    #add small offset in order to avoid self-intersection
+    light_ray_origins = hit.hit_point+light_ray_dirs*1e-3
+
+    light_distances = np.linalg.norm(sample_points - hit.hit_point)
+    intersects = light_intersect_shadow(light_ray_origins, light_ray_dirs, surfaces, light_distances)
+    
+    # Calculate the number of hits
+    light_hits = np.sum(~intersects)
+    return light_hits/num_shadow_rays
 
 def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
 
@@ -339,8 +367,6 @@ def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_s
 
     specular_color = light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular)
     return (diffuse_color+specular_color)*light_intensity
-
-
 
 
 
