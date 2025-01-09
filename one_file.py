@@ -66,18 +66,19 @@ class Camera:
         self.screen_distance = screen_distance
         self.screen_width = screen_width
 
+
 class Sphere:
     def __init__(self, position, radius, material_index):
         self.position = position
         self.radius = radius
         self.material_index = material_index
 
-    def intersect(self,ray):
+    def intersect(self, ray):
         oc = ray.origin - self.position
         a = np.dot(ray.direction, ray.direction)
         b = 2.0 * np.dot(oc, ray.direction)
-        c = np.dot(oc, oc) - self.radius**2
-        discriminant = b**2 - 4*a*c
+        c = np.dot(oc, oc) - self.radius ** 2
+        discriminant = b ** 2 - 4 * a * c
         if discriminant > 0:
             t1 = (-b - np.sqrt(discriminant)) / (2.0 * a)
             t2 = (-b + np.sqrt(discriminant)) / (2.0 * a)
@@ -87,37 +88,107 @@ class Sphere:
                 normal = normalize(hit_point - self.position)
                 return [True, t, hit_point, normal]
         return [False, None, None, None]
-    
+
+    def batch_intersect(self, origins, directions, max_distances):
+        oc = origins - self.position
+        a = np.sum(directions ** 2, axis=1)
+        b = 2.0 * np.sum(oc * directions, axis=1)
+        c = np.sum(oc ** 2, axis=1) - self.radius ** 2
+        discriminant = b ** 2 - 4 * a * c
+
+        valid = discriminant > 0
+        sqrt_discriminant = np.sqrt(np.maximum(discriminant, 0))
+        t1 = (-b - sqrt_discriminant) / (2.0 * a)
+        t2 = (-b + sqrt_discriminant) / (2.0 * a)
+
+        t = np.where(t1 > 0, t1, t2)
+        intersects = valid & (t > 0) & (t < max_distances)
+
+        return intersects
+
+
 class Cube:
     def __init__(self, position, scale, material_index):
-        self.position = position
+        self.position = np.array(position)
         self.scale = scale
         self.material_index = material_index
 
-    def intersect(self,ray):
-        #TODO implement method
-        pass
+    def intersect(self, ray):
+        min_bound = self.position - self.scale / 2
+        max_bound = self.position + self.scale / 2
+        t_near = -float('inf')
+        t_far = float('inf')
+
+        for i in range(3):
+            if ray.direction[i] == 0:
+                if ray.origin[i] < min_bound[i] or ray.origin[i] > max_bound[i]:
+                    return [False, None, None, None]
+            else:
+                t1 = (min_bound[i] - ray.origin[i]) / ray.direction[i]
+                t2 = (max_bound[i] - ray.origin[i]) / ray.direction[i]
+                if t1 > t2:
+                    t1, t2 = t2, t1
+                t_near = max(t_near, t1)
+                t_far = min(t_far, t2)
+                if t_near > t_far:
+                    return [False, None, None, None]
+
+        if t_far < 0:
+            return [False, None, None, None]
+
+        hit_point = ray.at(t_near)
+        normal = np.zeros(3)
+        for i in range(3):
+            if np.isclose(hit_point[i], min_bound[i]):
+                normal[i] = -1
+            elif np.isclose(hit_point[i], max_bound[i]):
+                normal[i] = 1
+
+        normal = normalize(normal)
+        return [True, t_near, hit_point, normal]
+
+    def batch_intersect(self, origins, directions, max_distances):
+        min_bound = self.position - self.scale / 2
+        max_bound = self.position + self.scale / 2
+        
+        t_min = (min_bound - origins) / directions
+        t_max = (max_bound - origins) / directions
+
+        t_near = np.maximum(np.minimum(t_min, t_max), 0)
+        t_far = np.minimum(np.maximum(t_min, t_max), max_distances[..., np.newaxis])
+
+        valid = np.all(t_near <= t_far, axis=1)
+        nearest_t = np.min(t_far, axis=1)
+        intersects = valid & (nearest_t > 0) & (nearest_t < max_distances)
+
+        return intersects
 
 
 class InfinitePlane:
     def __init__(self, normal, offset, material_index):
-        self.normal = normal
+        self.normal = normalize(normal)
         self.offset = offset
         self.material_index = material_index
 
-    def intersect(self,ray):
+    def intersect(self, ray):
         denom = np.dot(ray.direction, self.normal)
-        if(abs(denom)>1e-6):
-            t = -(np.dot(ray.origin, self.normal)-self.offset)/denom
-            if(t>0):
+        if abs(denom) > 1e-6:
+            t = -(np.dot(ray.origin, self.normal) - self.offset) / denom
+            if t > 0:
                 hit_point = ray.at(t)
-                if(np.dot(self.normal, ray.direction)<0):
-                    normal = np.array(self.normal)
-                else:
-                    normal = - np.array(self.normal)
-                return [True, t, hit_point, normal]    
+                normal = self.normal if np.dot(self.normal, ray.direction) < 0 else -self.normal
+                return [True, t, hit_point, normal]
         return [False, None, None, None]
+
+    def batch_intersect(self, origins, directions, max_distances):
+        denom = np.dot(directions, self.normal)
+        valid_denom = np.abs(denom) > 1e-6
         
+        t = -(np.dot(origins, self.normal) - self.offset) / denom
+        intersects = valid_denom & (t > 0) & (t < max_distances)
+        
+        return intersects
+
 
 def parse_scene_file(file_path):
     objects = []
