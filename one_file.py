@@ -66,33 +66,18 @@ class Camera:
         self.screen_distance = screen_distance
         self.screen_width = screen_width
 
-class Ray:
-    def __init__(self, origin, direction):
-        self.origin = np.array(origin)
-        self.direction = normalize(direction)
-    
-    def at(self, t):
-        return self.origin + t * self.direction
-
-class Intersection:
-    def __init__(self, t, obj, hit_point, normal):
-        self.t = t
-        self.obj = obj
-        self.hit_point = hit_point
-        self.normal = normal
-
 class Sphere:
     def __init__(self, position, radius, material_index):
         self.position = position
         self.radius = radius
         self.material_index = material_index
 
-    def intersect(self, ray):
+    def intersect(self,ray):
         oc = ray.origin - self.position
         a = np.dot(ray.direction, ray.direction)
         b = 2.0 * np.dot(oc, ray.direction)
-        c = np.dot(oc, oc) - self.radius ** 2
-        discriminant = b ** 2 - 4 * a * c
+        c = np.dot(oc, oc) - self.radius**2
+        discriminant = b**2 - 4*a*c
         if discriminant > 0:
             t1 = (-b - np.sqrt(discriminant)) / (2.0 * a)
             t2 = (-b + np.sqrt(discriminant)) / (2.0 * a)
@@ -102,104 +87,37 @@ class Sphere:
                 normal = normalize(hit_point - self.position)
                 return [True, t, hit_point, normal]
         return [False, None, None, None]
-
-    def batch_intersect(self, origins, directions, max_distances):
-        oc = origins - self.position
-        a = np.sum(directions ** 2, axis=1)
-        b = 2.0 * np.sum(oc * directions, axis=1)
-        c = np.sum(oc ** 2, axis=1) - self.radius ** 2
-        discriminant = b ** 2 - 4 * a * c
-
-        valid = discriminant > 0
-        sqrt_discriminant = np.sqrt(np.maximum(discriminant, 0))
-        t1 = (-b - sqrt_discriminant) / (2.0 * a)
-        t2 = (-b + sqrt_discriminant) / (2.0 * a)
-
-        t = np.where(t1 > 0, t1, t2)
-        intersects = valid & (t > 0) & (t < max_distances)
-
-        return intersects
-
+    
 class Cube:
     def __init__(self, position, scale, material_index):
-        self.position = np.array(position)
+        self.position = position
         self.scale = scale
         self.material_index = material_index
 
-    def intersect(self, ray):
-        min_bound = self.position - self.scale / 2
-        max_bound = self.position + self.scale / 2
-        t_near = -float('inf')
-        t_far = float('inf')
+    def intersect(self,ray):
+        #TODO implement method
+        pass
 
-        for i in range(3):
-            if ray.direction[i] == 0:
-                if ray.origin[i] < min_bound[i] or ray.origin[i] > max_bound[i]:
-                    return [False, None, None, None]
-            else:
-                t1 = (min_bound[i] - ray.origin[i]) / ray.direction[i]
-                t2 = (max_bound[i] - ray.origin[i]) / ray.direction[i]
-                if t1 > t2:
-                    t1, t2 = t2, t1
-                t_near = max(t_near, t1)
-                t_far = min(t_far, t2)
-                if t_near > t_far:
-                    return [False, None, None, None]
-
-        if t_far < 0:
-            return [False, None, None, None]
-
-        hit_point = ray.at(t_near)
-        normal = np.zeros(3)
-        for i in range(3):
-            if np.isclose(hit_point[i], min_bound[i]):
-                normal[i] = -1
-            elif np.isclose(hit_point[i], max_bound[i]):
-                normal[i] = 1
-
-        normal = normalize(normal)
-        return [True, t_near, hit_point, normal]
-
-    def batch_intersect(self, origins, directions, max_distances):
-        min_bound = self.position - self.scale / 2
-        max_bound = self.position + self.scale / 2
-        
-        t_min = (min_bound - origins) / directions
-        t_max = (max_bound - origins) / directions
-
-        t_near = np.maximum(np.minimum(t_min, t_max), 0)
-        t_far = np.minimum(np.maximum(t_min, t_max), max_distances[..., np.newaxis])
-
-        valid = np.all(t_near <= t_far, axis=1)
-        nearest_t = np.min(t_far, axis=1)
-        intersects = valid & (nearest_t > 0) & (nearest_t < max_distances)
-
-        return intersects
 
 class InfinitePlane:
     def __init__(self, normal, offset, material_index):
-        self.normal = normalize(normal)
+        self.normal = normal
         self.offset = offset
         self.material_index = material_index
 
-    def intersect(self, ray):
+    def intersect(self,ray):
         denom = np.dot(ray.direction, self.normal)
-        if abs(denom) > 1e-6:
-            t = -(np.dot(ray.origin, self.normal) - self.offset) / denom
-            if t > 0:
+        if(abs(denom)>1e-6):
+            t = -(np.dot(ray.origin, self.normal)-self.offset)/denom
+            if(t>0):
                 hit_point = ray.at(t)
-                normal = self.normal if np.dot(self.normal, ray.direction) < 0 else -self.normal
-                return [True, t, hit_point, normal]
+                if(np.dot(self.normal, ray.direction)<0):
+                    normal = np.array(self.normal)
+                else:
+                    normal = - np.array(self.normal)
+                return [True, t, hit_point, normal]    
         return [False, None, None, None]
-
-    def batch_intersect(self, origins, directions, max_distances):
-        denom = np.dot(directions, self.normal)
-        valid_denom = np.abs(denom) > 1e-6
         
-        t = -(np.dot(origins, self.normal) - self.offset) / denom
-        intersects = valid_denom & (t > 0) & (t < max_distances)
-        
-        return intersects
 
 def parse_scene_file(file_path):
     objects = []
@@ -279,49 +197,6 @@ def light_intersect(light_ray, surfaces):
             return True
     return False
 
-def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
-    root_number_shadow_rays = int(root_number_shadow_rays)
-    num_shadow_rays = root_number_shadow_rays ** 2
-
-    Ld=light.position-hit.hit_point
-    plane_normal = normalize(Ld)
-
-    #TODO check what happens if parallel
-    #These are the vectors of the plane
-    u = normalize(np.cross(np.array([0, 0, 1]), plane_normal))*light.radius/root_number_shadow_rays
-    v = normalize(np.cross(u, plane_normal))*light.radius/root_number_shadow_rays
-
-    #calculating the starting corner of the plane
-    rectangle_corner = light.position - (root_number_shadow_rays/2)*u - (root_number_shadow_rays/2)*v
-    rng = np.random.default_rng()
-    cnt_intersection = 0
-    for x in range(root_number_shadow_rays):
-        for y in range(root_number_shadow_rays):
-            sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
-            light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
-            if(light_intersect(light_ray, surfaces)):
-                cnt_intersection += 1
-    return 1-cnt_intersection/num_shadow_rays
-
-
-
-def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
-
-    light_intensity = calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays)
-    
-    Ld=light.position-hit.hit_point
-    Ld = normalize(Ld)
-    reflected = normalize(reflect(Ld, hit.normal))
-    diffuse_color = np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse)
-
-    # These are 2 auxilliary values necessary for the specular color calculation
-    reflected_dot = np.dot(reflected, -ray.direction)
-    phong_factor = np.sign(reflected_dot)*np.power(np.abs(reflected_dot), alpha)
-
-    specular_color = np.clip(light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular), 0, 1)
-    return (diffuse_color+specular_color)*light_intensity
-
-
 def get_color(hit, ray, scene_settings, lights, surfaces, material_list):
     if(hit.obj==None):
         return scene_settings.background_color
@@ -352,6 +227,48 @@ def ray_trace(hit, ray, scene_settings, lights, surfaces, material_list, level):
     reflection_color = ray_trace(reflection_hit, Ray(hit.hit_point, reflection_dir), scene_settings, lights, surfaces, material_list, level-1)      
     color += np.array(reflection_color)*material_list[hit.obj.material_index-1].reflection_color
     return np.clip(color, 0, 1)
+
+
+def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
+    root_number_shadow_rays = int(root_number_shadow_rays)
+    num_shadow_rays = root_number_shadow_rays ** 2
+
+    Ld=light.position-hit.hit_point
+    plane_normal = normalize(Ld)
+
+    #TODO check what happens if parallel
+    #These are the vectors of the plane
+    u = normalize(np.cross(np.array([0, 0, 1]), plane_normal))*light.radius/root_number_shadow_rays
+    v = normalize(np.cross(u, plane_normal))*light.radius/root_number_shadow_rays
+
+    #calculating the starting corner of the plane
+    rectangle_corner = light.position - (root_number_shadow_rays/2)*u - (root_number_shadow_rays/2)*v
+    rng = np.random.default_rng()
+    cnt_intersection = 0
+    for x in range(root_number_shadow_rays):
+        for y in range(root_number_shadow_rays):
+            sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
+            light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
+            if(light_intersect(light_ray, surfaces)):
+                cnt_intersection += 1
+    return 1-cnt_intersection/num_shadow_rays
+
+def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
+
+    light_intensity = calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays)
+    
+    Ld=light.position-hit.hit_point
+    Ld = normalize(Ld)
+    reflected = normalize(reflect(Ld, hit.normal))
+    diffuse_color = np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse)
+
+    # These are 2 auxilliary values necessary for the specular color calculation
+    reflected_dot = np.dot(reflected, -ray.direction)
+    phong_factor = np.sign(reflected_dot)*np.power(np.abs(reflected_dot), alpha)
+
+    specular_color = light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular)
+    return (diffuse_color+specular_color)*light_intensity
+
 
 
 
