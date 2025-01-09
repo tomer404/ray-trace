@@ -329,9 +329,17 @@ def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
     rng = np.random.default_rng()
     cnt_intersection = 0
     sample_points = []
-    #x_vec = np.arange(0, root_number_shadow_rays)+rng.random()
-    #y_vec = np.arange(0, root_number_shadow_rays)+rng.random()
-    #sample_points[:, 0] = rectangle_corner[0] + u[0]*(np.arange(0, root_number_shadow_rays)+rng.random())+v[0]*(np.arange(0, root_number_shadow_rays)+rng.random())
+    '''
+    sample_points = np.zeros((root_number_shadow_rays, root_number_shadow_rays, 3))
+
+    x, y = np.meshgrid(np.arange(root_number_shadow_rays), np.arange(root_number_shadow_rays))
+    rand_x = (rng.random((root_number_shadow_rays, root_number_shadow_rays))+x)
+    rand_y = (rng.random((root_number_shadow_rays, root_number_shadow_rays))+y)
+    for i in range(3):
+        sample_points[..., i] = rand_x*u[i] + rand_y*v[i]
+    sample_points=sample_points.reshape(-1, 3)
+
+    '''
     for x in range(root_number_shadow_rays):
         for y in range(root_number_shadow_rays):
             sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
@@ -339,8 +347,7 @@ def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
             #light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
             #if(light_intersect(light_ray, surfaces)):
             #    cnt_intersection += 1
-
-    sample_points=np.array(sample_points)
+    
     light_ray_dirs = sample_points - hit.hit_point
     #add small offset in order to avoid self-intersection
     light_ray_origins = hit.hit_point+light_ray_dirs*1e-3
@@ -365,7 +372,7 @@ def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_s
     reflected_dot = np.dot(reflected, -ray.direction)
     phong_factor = np.sign(reflected_dot)*np.power(np.abs(reflected_dot), alpha)
 
-    specular_color = light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular)
+    specular_color = np.clip(light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular), 0, 1)
     return (diffuse_color+specular_color)*light_intensity
 
 
