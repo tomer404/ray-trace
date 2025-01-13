@@ -89,6 +89,7 @@ class Sphere:
                 return [True, t, hit_point, normal]
         return [False, None, None, None]
 
+
     def batch_intersect(self, origins, directions, max_distances):
         oc = origins - self.position
         a = np.sum(directions ** 2, axis=1)
@@ -150,16 +151,22 @@ class Cube:
     def batch_intersect(self, origins, directions, max_distances):
         min_bound = self.position - self.scale / 2
         max_bound = self.position + self.scale / 2
-        
-        t_min = (min_bound - origins) / directions
-        t_max = (max_bound - origins) / directions
+        t_near = np.full(origins.shape[0], -float('inf'))
+        t_far = np.full(origins.shape[0], float('inf'))
+        valid = np.full(origins.shape[0], True)
+        for i in range(3):
+            origins_d = origins[:, i]
+            directions_d = directions[:, i]
+            #invalid = (directions == 0 & (origins_d<min_bound[i] |origins_d>max_bound[i]))
+            t1 = np.where(directions_d != 0, (min_bound[i] - origins_d) / directions_d, np.inf)
+            t2 = np.where(directions_d!=0, (max_bound[i] - origins_d) / directions_d, np.inf)
+            mask = t1>t2
+            t1[mask], t2[mask] = t2[mask], t1[mask]
+            t_near = np.maximum(t_near, t1)
+            t_far = np.minimum(t_far, t2)
+            valid = valid & (t_near<=t_far)
 
-        t_near = np.maximum(np.minimum(t_min, t_max), 0)
-        t_far = np.minimum(np.maximum(t_min, t_max), max_distances[..., np.newaxis])
-
-        valid = np.all(t_near <= t_far, axis=1)
-        nearest_t = np.min(t_far, axis=1)
-        intersects = valid & (nearest_t > 0) & (nearest_t < max_distances)
+        intersects = valid & (t_near > 0) & (t_near < max_distances)
 
         return intersects
 
@@ -313,6 +320,7 @@ def light_intersect_shadow(ray_origins, ray_directions, surfaces, light_distance
 
 
 def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
+    '''
     root_number_shadow_rays = int(root_number_shadow_rays)
     num_shadow_rays = root_number_shadow_rays ** 2
 
@@ -329,44 +337,68 @@ def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
     rng = np.random.default_rng()
     cnt_intersection = 0
     sample_points = []
-    '''
-    sample_points = np.zeros((root_number_shadow_rays, root_number_shadow_rays, 3))
 
-    x, y = np.meshgrid(np.arange(root_number_shadow_rays), np.arange(root_number_shadow_rays))
-    rand_x = (rng.random((root_number_shadow_rays, root_number_shadow_rays))+x)
-    rand_y = (rng.random((root_number_shadow_rays, root_number_shadow_rays))+y)
-    for i in range(3):
-        sample_points[..., i] = rand_x*u[i] + rand_y*v[i]
-    sample_points=sample_points.reshape(-1, 3)
 
-    '''
     for x in range(root_number_shadow_rays):
         for y in range(root_number_shadow_rays):
             sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
             sample_points.append(sample_position)
-            #light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
-            #if(light_intersect(light_ray, surfaces)):
-            #    cnt_intersection += 1
+            light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
+            if(light_intersect(light_ray, surfaces)):
+                cnt_intersection += 1
     
-    light_ray_dirs = sample_points - hit.hit_point
-    #add small offset in order to avoid self-intersection
-    light_ray_origins = hit.hit_point+light_ray_dirs*1e-3
+    light_hits = num_shadow_rays - cnt_intersection
+    return 1-light.shadow_intensity+light.shadow_intensity*light_hits/num_shadow_rays
+    '''
+    root_number_shadow_rays = int(root_number_shadow_rays)
+    num_shadow_rays = root_number_shadow_rays ** 2
 
-    light_distances = np.linalg.norm(sample_points - hit.hit_point)
+    Ld = light.position - hit.hit_point
+    plane_normal = normalize(Ld)
+
+    # These are the vectors of the plane
+    u = normalize(np.cross(np.array([0, 0, 1]), plane_normal)) * light.radius / root_number_shadow_rays
+    v = normalize(np.cross(u, plane_normal)) * light.radius / root_number_shadow_rays
+
+    # Calculating the starting corner of the plane
+    rectangle_corner = light.position - (root_number_shadow_rays / 2) * u - (root_number_shadow_rays / 2) * v
+
+    # Create a meshgrid for vectorized sampling
+    grid_x, grid_y = np.meshgrid(np.arange(root_number_shadow_rays), np.arange(root_number_shadow_rays))
+
+    # Generate random offsets within each grid cell
+    rng = np.random.default_rng()
+    random_offsets = rng.random((root_number_shadow_rays, root_number_shadow_rays, 2))
+
+    # Compute the sample positions using vectorized operations
+    sample_positions = (
+        rectangle_corner 
+        + (grid_x + random_offsets[..., 0])[..., np.newaxis] * u
+        + (grid_y + random_offsets[..., 1])[..., np.newaxis] * v
+    )
+
+    # Flatten the sample positions for batch processing
+    sample_points = sample_positions.reshape(-1, 3)
+
+    light_ray_dirs = sample_points - hit.hit_point
+    # Add small offset in order to avoid self-intersection
+    light_ray_origins = hit.hit_point + light_ray_dirs * 1e-3
+
+    light_distances = np.linalg.norm(sample_points - hit.hit_point, axis=1)
     intersects = light_intersect_shadow(light_ray_origins, light_ray_dirs, surfaces, light_distances)
     
     # Calculate the number of hits
     light_hits = np.sum(~intersects)
-    return light_hits/num_shadow_rays
+    return 1 - light.shadow_intensity + light.shadow_intensity * light_hits / num_shadow_rays
 
 def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
-
+    
     light_intensity = calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays)
     
     Ld=light.position-hit.hit_point
     Ld = normalize(Ld)
     reflected = normalize(reflect(Ld, hit.normal))
-    diffuse_color = np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse)
+    diffuse_color = np.clip(np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse), 0, 1)
 
     # These are 2 auxilliary values necessary for the specular color calculation
     reflected_dot = np.dot(reflected, -ray.direction)
