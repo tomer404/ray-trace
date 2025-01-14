@@ -149,26 +149,32 @@ class Cube:
         return [True, t_near, hit_point, normal]
 
     def batch_intersect(self, origins, directions, max_distances):
+        # Compute bounds
         min_bound = self.position - self.scale / 2
         max_bound = self.position + self.scale / 2
-        t_near = np.full(origins.shape[0], -float('inf'))
-        t_far = np.full(origins.shape[0], float('inf'))
-        valid = np.full(origins.shape[0], True)
-        for i in range(3):
-            origins_d = origins[:, i]
-            directions_d = directions[:, i]
-            #invalid = (directions == 0 & (origins_d<min_bound[i] |origins_d>max_bound[i]))
-            t1 = np.where(directions_d != 0, (min_bound[i] - origins_d) / directions_d, np.inf)
-            t2 = np.where(directions_d!=0, (max_bound[i] - origins_d) / directions_d, np.inf)
-            mask = t1>t2
-            t1[mask], t2[mask] = t2[mask], t1[mask]
-            t_near = np.maximum(t_near, t1)
-            t_far = np.minimum(t_far, t2)
-            valid = valid & (t_near<=t_far)
 
+        # Compute t1 and t2 for all axes at once
+        non_zero = directions != 0  # Valid directions
+        t1 = np.where(non_zero, (min_bound - origins) / directions, np.inf)
+        t2 = np.where(non_zero, (max_bound - origins) / directions, np.inf)
+
+        # Ensure t1 <= t2 for all axes
+        t_min = np.minimum(t1, t2)
+        t_max = np.maximum(t1, t2)
+
+        # Combine t_near and t_far across all axes
+        t_near = np.max(t_min, axis=1)  # Maximum of t_min along axes
+        t_far = np.min(t_max, axis=1)   # Minimum of t_max along axes
+
+        # Handle validity: directions == 0 and bounds check
+        invalid = ~non_zero & ((origins < min_bound) | (origins > max_bound))
+        valid = np.all(~invalid, axis=1) & (t_near <= t_far)
+
+        # Final intersection check
         intersects = valid & (t_near > 0) & (t_near < max_distances)
 
         return intersects
+
 
 
 class InfinitePlane:
@@ -274,6 +280,23 @@ def light_intersect(light_ray, surfaces):
         if result[0] and epsilon < result[1] < 1:
             return True
     return False
+
+
+def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
+    
+    light_intensity = calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays)
+    
+    Ld=light.position-hit.hit_point
+    Ld = normalize(Ld)
+    reflected = normalize(reflect(Ld, hit.normal))
+    diffuse_color = np.clip(np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse), 0, 1)
+
+    # These are 2 auxilliary values necessary for the specular color calculation
+    reflected_dot = np.dot(reflected, -ray.direction)
+    phong_factor = np.sign(reflected_dot)*np.power(np.abs(reflected_dot), alpha)
+
+    specular_color = np.clip(light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular), 0, 1)
+    return (diffuse_color+specular_color)*light_intensity
 
 
 def get_color(hit, ray, scene_settings, lights, surfaces, material_list):
@@ -391,55 +414,10 @@ def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
     light_hits = np.sum(~intersects)
     return 1 - light.shadow_intensity + light.shadow_intensity * light_hits / num_shadow_rays
 
-def compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, root_number_shadow_rays):
-    
-    light_intensity = calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays)
-    
-    Ld=light.position-hit.hit_point
-    Ld = normalize(Ld)
-    reflected = normalize(reflect(Ld, hit.normal))
-    diffuse_color = np.clip(np.dot(Ld, hit.normal)*np.array(light.color)*np.array(hit_object_diffuse), 0, 1)
-
-    # These are 2 auxilliary values necessary for the specular color calculation
-    reflected_dot = np.dot(reflected, -ray.direction)
-    phong_factor = np.sign(reflected_dot)*np.power(np.abs(reflected_dot), alpha)
-
-    specular_color = np.clip(light.specular_intensity*phong_factor*np.array(light.color)*np.array(hit_object_specular), 0, 1)
-    return (diffuse_color+specular_color)*light_intensity
 
 
 
-def compute_shadow(hit_point, light, root_number_shadow_rays, scene_objects):
-    num_shadow_rays = int(root_number_shadow_rays ** 2)  # Ensure it's an integer
-    light_hits = 0
 
-    for _ in range(num_shadow_rays):
-        # Generate random shadow ray within light radius
-        light_dir = light.position - hit_point
-        light_distance = np.linalg.norm(light_dir)
-        light_dir = light_dir / light_distance
-
-        # Create a shadow ray
-        shadow_ray = Ray(hit_point + light_dir * 1e-3, light_dir)
-
-        # Check for intersections
-        shadow_intersects = False
-        for obj in scene_objects:
-            if isinstance(obj, Sphere):
-                result = obj.intersect(shadow_ray, obj)
-            elif isinstance(obj, InfinitePlane):
-                result = obj.intersect(shadow_ray, obj)
-            else:
-                continue
-
-            if result and 0 < result[0] < light_distance:
-                shadow_intersects = True
-                break
-
-        if not shadow_intersects:
-            light_hits += 1
-
-    return light_hits / num_shadow_rays
 
 def save_image(image_array):
     image = Image.fromarray(np.uint8(image_array))
