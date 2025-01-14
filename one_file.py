@@ -268,6 +268,23 @@ def find_nearest_intersection(ray, surfaces):
     return Intersection(closest_t, closest_obj, hit_point, normal)
 
 
+def find_next_intersection(ray, surfaces, object):
+    closest_t = float('inf')
+    closest_obj = None
+    normal = None
+    hit_point = None
+    for obj in surfaces:
+        if(obj !=object):
+            result = obj.intersect(ray)
+            if result[0] and result[1] < closest_t:
+                closest_t = result[1]
+                hit_point = result[2]
+                normal = result[3]
+                closest_obj = obj
+                
+    return Intersection(closest_t, closest_obj, hit_point, normal)
+
+
 def light_intersect(light_ray, surfaces):
     '''
     This function recieves as input a light ray from the hit point to the light source
@@ -314,7 +331,11 @@ def get_color(hit, ray, scene_settings, lights, surfaces, material_list):
     #compute lighting for each light
     for light in lights:
         color_sum += compute_lighting(hit, ray, light, surfaces, hit_object_diffuse, hit_object_specular, alpha, scene_settings.root_number_shadow_rays)
-    color_sum = np.array(scene_settings.background_color) * transparency+ color_sum*(1-transparency)
+    if(transparency>0):
+        continuous_ray = Ray(hit.hit_point, ray.direction)
+        next_hit = find_next_intersection(continuous_ray, surfaces, hit.obj)
+        see_through_color = get_color(next_hit, continuous_ray, scene_settings, lights, surfaces, material_list)
+        color_sum = np.array(see_through_color) * transparency + color_sum*(1-transparency)
     return np.clip(color_sum, 0, 1)
 
 
@@ -343,36 +364,6 @@ def light_intersect_shadow(ray_origins, ray_directions, surfaces, light_distance
 
 
 def calc_light_intensity(hit, ray, light, surfaces, root_number_shadow_rays):
-    '''
-    root_number_shadow_rays = int(root_number_shadow_rays)
-    num_shadow_rays = root_number_shadow_rays ** 2
-
-    Ld=light.position-hit.hit_point
-    plane_normal = normalize(Ld)
-
-    #TODO check what happens if parallel
-    #These are the vectors of the plane
-    u = normalize(np.cross(np.array([0, 0, 1]), plane_normal))*light.radius/root_number_shadow_rays
-    v = normalize(np.cross(u, plane_normal))*light.radius/root_number_shadow_rays
-
-    #calculating the starting corner of the plane
-    rectangle_corner = light.position - (root_number_shadow_rays/2)*u - (root_number_shadow_rays/2)*v
-    rng = np.random.default_rng()
-    cnt_intersection = 0
-    sample_points = []
-
-
-    for x in range(root_number_shadow_rays):
-        for y in range(root_number_shadow_rays):
-            sample_position = rectangle_corner + u*(x+rng.random()) + v*(y+rng.random())
-            sample_points.append(sample_position)
-            light_ray = Ray(hit.hit_point, sample_position-hit.hit_point)
-            if(light_intersect(light_ray, surfaces)):
-                cnt_intersection += 1
-    
-    light_hits = num_shadow_rays - cnt_intersection
-    return 1-light.shadow_intensity+light.shadow_intensity*light_hits/num_shadow_rays
-    '''
     root_number_shadow_rays = int(root_number_shadow_rays)
     num_shadow_rays = root_number_shadow_rays ** 2
 
